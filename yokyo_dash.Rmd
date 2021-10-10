@@ -1,0 +1,243 @@
+---
+title: "Yokyo FunOlympics"
+output: 
+  flexdashboard::flex_dashboard:
+    logo: favicon.png 
+    orientation: columns
+    vertical_layout: fill
+    runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shiny)
+library(tidyr)
+library(lubridate)
+library(dplyr)
+library(ApacheLogProcessor)
+library(stringr)
+library(DT)
+library(plotly)
+library(leaflet)
+library(ggplot2)
+
+#ip addresses to geo location using python module IP2location
+library(reticulate)
+library(ip2location)
+
+#py_run_string("import IP2Location")
+#py_run_string("IP2LocObj = IP2Location.IP2Location()")
+#py_run_string("IP2LocObj.open('IP2LOCATION-LITE-DB5.BIN')")
+
+
+```
+
+
+```{r data}
+df <- read.delim("./logfile.txt")
+
+colnames(df)<-c("IP", "Time","URL", "Status")
+
+```
+
+```{r}
+#preprocessing
+#separating date and time column
+df= df%>% mutate(Time = dmy_hms(Time))
+
+df$Date <- NA
+
+df$Date <- format(as.POSIXct(df$Time, format= "%Y:%M:%D %H:%M:%S"),"%Y:%M:%D")
+df$Date<-sub(".*:", " ", df$Date)
+df$Date<-mdy(df$Date)
+
+df$Time<-  format(as.POSIXct(df$Time, format= "%Y:%M:%D %H:%M:%S"),"%H:%M:%S")
+
+
+#separating method from URL
+df$Method<- NA
+
+df$Method<- clear.urls(df$URL, remove_http_method = FALSE)
+
+df$Method= str_extract(df$Method, "GET|POST")
+
+#clean urls
+df$URL<- clear.urls(df$URL, remove_http_method = TRUE)
+```
+
+
+```{r}
+   dataset <- eventReactive(input$file1,{
+      dataset <- read.delim(input$file1$datapath)
+      colnames(df)<-c("IP", "Time","URL", "Status")
+    })
+```
+
+
+Column {.sidebar data-width=200}
+===================================== 
+```{r, echo = FALSE}
+    fileInput("file1", "Choose LogFile",
+                    multiple = TRUE,
+                    accept = c("text/csv",
+                             "text/comma-separated-values,text/plain",
+                             ".csv"))
+```
+
+
+Visualizations {data-icon="fa-signal"}
+===================================== 
+
+Column {data-width=600}
+-----------------------------------------------------------------------
+
+### Traffic
+
+```{r}
+requests = as.data.frame(table(format(df$Date, "%d")))
+month_a<- as.data.frame(table(format(df$Date, "%m/%Y")))
+renderPlotly({
+  p1 <- plot_ly(requests, x = ~Var1, y = ~Freq, group=1) %>% 
+  add_lines(name = "Traffic by Day of month")
+p2 <- plot_ly(month_a, x = ~Var1, y = ~Freq, group=1) %>% 
+  add_lines(name = "Traffic by month of year")
+subplot(p1, p2) 
+})
+
+```
+
+### Monthly Trend
+
+```{r}
+renderPlotly({
+month_a<- as.data.frame(table(format(df$Date, "%m/%Y")))
+ggplot(data = month_a, aes(x = Var1, y = Freq, group=1)) +
+  geom_line(colour = 'blue') + xlab('Month') + ylab('No of requests')
+})
+```
+
+
+Column {data-width=600}
+-----------------------------------------------------------------------
+
+### HTTP Status trend
+
+```{r}
+a= table(df$Status)
+status = as.data.frame(a)
+renderPlotly({
+  ggplot(status, aes(x=Var1, y=Freq, group=1)) +
+  geom_line(colour = 'blue') + xlab('Status') + ylab('Occurance') 
+})
+
+```
+
+### Propotions of views by Country
+
+```{r}
+ip<- c("101.168.78.59", "111.101.66.248", "115.14.56.140", "118.206.244.2", "119.220.210.247", "131.41.78.243", "177.147.139.228", "185.124.38.12", "201.175.225.161", "241.91.16.200", "69.96.155.21", "79.202.86.209", "84.146.117.229", "91.68.162.55", "94.164.200.219")
+country<-c("Australia", "Japan", "Korea (Republic of)", "China", "Korea (Republic of)", "United States of America", "Brazil", "Spain", "Mexico", "No name", "United States of America", "Germany","Germany", "France", "Italy")
+lat<-c("-37.813999", "35.689507", "37.56826", "28.200001", "37.56826", "39.966381", "-18.165831", "40.4165", "19.417219", "0.0", "40.735661", "53.059631", "51.5", "48.853409", "44.22361")
+long<-c("144.963318", "139.691696", "126.977829", "112.966667", "126.977829", "-83.012772", "-47.946388", "-3.70256", "-99.156937", "0.0", "-74.172371", "14.28154", "12.0", "2.3488", "12.05278")
+
+ip_lst= table(df$IP)
+ip_lst = as.data.frame(ip_lst)
+names(ip_lst)[1] = "IP"
+
+df_location<- data.frame(ip, country, as.numeric(lat), as.numeric(long))
+names(df_location)<- c("IP", "Country", "Latitude", "Longitude")
+
+
+locdf<- merge(df_location, ip_lst, by= "IP")
+d<- subset(locdf, select = -c(IP, Latitude, Longitude))
+renderPlotly({
+  data <- d
+
+fig <- plot_ly(data, labels = ~Country, values = ~Freq, type = 'pie')
+fig <- fig %>% layout(
+                      xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                      yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+fig
+})
+
+```
+
+
+Tables {data-icon="fa-table"}
+=====================================     
+
+
+Column {data-width=600}
+-----------------------------------------------------------------------
+### URL Page Visits
+
+```{r}
+renderDataTable({
+b= table(df$URL)
+pages= as.data.frame(b)
+colnames(pages)= c("pages", "frequency")
+datatable(pages)
+})
+
+```
+
+
+Column {data-width=600}
+-----------------------------------------------------------------------
+
+### Number of requests by month
+
+```{r}
+renderDataTable({
+month_a<- as.data.frame(table(format(df$Date, "%m/%Y")))
+names(month_a)[1] = "Month of Year"
+datatable(month_a)
+})
+
+```
+
+### Status Frequency
+
+```{r}
+renderDataTable({
+  a= table(df$Status)
+status = as.data.frame(a)
+names(status)[1] = "status"
+datatable(status)
+})
+```
+
+
+Geographical Mapping {data-icon="fa-map"}
+===================================== 
+### Countries
+```{r}
+
+#py_run_string("rec = IP2LocObj.get_all('94.164.200.219')")
+#py_run_string("print(rec.country_long)")
+#py_run_string("print(rec.latitude)")
+#py_run_string("print(rec.longitude)")
+
+ip<- c("101.168.78.59", "111.101.66.248", "115.14.56.140", "118.206.244.2", "119.220.210.247", "131.41.78.243", "177.147.139.228", "185.124.38.12", "201.175.225.161", "241.91.16.200", "69.96.155.21", "79.202.86.209", "84.146.117.229", "91.68.162.55", "94.164.200.219")
+country<-c("Australia", "Japan", "Korea (Republic of)", "China", "Korea (Republic of)", "United States of America", "Brazil", "Spain", "Mexico", "No name", "United States of America", "Germany","Germany", "France", "Italy")
+lat<-c("-37.813999", "35.689507", "37.56826", "28.200001", "37.56826", "39.966381", "-18.165831", "40.4165", "19.417219", "0.0", "40.735661", "53.059631", "51.5", "48.853409", "44.22361")
+long<-c("144.963318", "139.691696", "126.977829", "112.966667", "126.977829", "-83.012772", "-47.946388", "-3.70256", "-99.156937", "0.0", "-74.172371", "14.28154", "12.0", "2.3488", "12.05278")
+
+ip_lst= table(df$IP)
+ip_lst = as.data.frame(ip_lst)
+names(ip_lst)[1] = "IP"
+
+df_location<- data.frame(ip, country, as.numeric(lat), as.numeric(long))
+names(df_location)<- c("IP", "Country", "Latitude", "Longitude")
+
+
+locdf<- merge(df_location, ip_lst, by= "IP")
+
+renderLeaflet({
+leaflet(locdf) %>% addTiles() %>%
+  addCircleMarkers(radius= 1, lng= ~Longitude, lat = ~Latitude, popup = ~Freq)
+})
+
+```
+
